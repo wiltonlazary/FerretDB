@@ -1,50 +1,86 @@
 // @ts-check
 // Note: type annotations allow type checking and IDEs autocompletion
 
-const lightCodeTheme = require('prism-react-renderer/themes/github');
-const darkCodeTheme = require('prism-react-renderer/themes/dracula');
+import { themes } from "prism-react-renderer";
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'FerretDB Documentation',
-  tagline: 'A truly Open Source MongoDB alternative',
+  title: "FerretDB",
+  tagline: "A truly Open Source MongoDB alternative",
 
-  url: 'https://docs.ferretdb.io',
-  baseUrl: '/',
+  url: "https://docs.ferretdb.io",
+  baseUrl: "/",
 
-  favicon: 'img/favicon.ico',
+  favicon: "img/favicon.ico",
   trailingSlash: true,
 
-  onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'throw',
+  onBrokenAnchors: "throw",
+  onBrokenLinks: "throw",
+  onBrokenMarkdownLinks: "throw",
+  onDuplicateRoutes: "throw",
 
   i18n: {
-    defaultLocale: 'en',
-    locales: ['en'],
+    defaultLocale: "en",
+    locales: ["en"],
   },
 
+  scripts: [{ src: "https://plausible.io/js/script.js", defer: true, "data-domain": "docs.ferretdb.io" }],
+
   plugins: [
+    [
+      // https://docusaurus.io/docs/api/plugins/@docusaurus/plugin-client-redirects
+      // Note that it does not work in development (`task docs-dev`).
+      require.resolve("@docusaurus/plugin-client-redirects"),
+      {
+        redirects: [
+          { to: "/migration/diff", from: "/diff" },
+          { to: "/reference", from: ["/reference/supported_commands", "/reference/supported-commands"] },
+          { to: "/installation", from: "/quickstart" },
+        ],
+
+        createRedirects(existingPath) {
+          if (existingPath.startsWith("/installation/ferretdb")) {
+            return [
+              // old blog posts
+              // for example: /quickstart-guide/docker/ -> /installation/ferretdb/docker/
+              existingPath.replace("/installation/ferretdb", "/quickstart-guide"),
+              existingPath.replace("/installation/ferretdb", "/quickstart_guide"),
+            ];
+          }
+
+          return undefined;
+        },
+      },
+    ],
     [
       require.resolve("@cmfcmf/docusaurus-search-local"),
       {
         indexBlog: true, // Index blog posts in search engine
         indexDocs: true, // Blog plugin is disabled, blog search needs to be disabled too
+        lunr: {
+          tokenizerSeparator: /[\s\-\$]+/,
+        },
       },
     ],
+    "plugin-image-zoom",
   ],
 
   presets: [
     [
-      'classic',
+      "classic",
       /** @type {import('@docusaurus/preset-classic').Options} */
       ({
         docs: {
-          routeBasePath: '/',
-          sidebarPath: require.resolve('./sidebars.js'),
-          editUrl: 'https://github.com/FerretDB/FerretDB/tree/main/website',
+          routeBasePath: "/",
+          sidebarPath: require.resolve("./sidebars.js"),
+          editUrl: "https://github.com/FerretDB/FerretDB/tree/main/website",
+
+          // https://docusaurus.io/docs/versioning#configuring-versioning-behavior
+          // https://docusaurus.io/docs/api/plugins/@docusaurus/plugin-content-docs#configuration
+          versions: {},
         },
         theme: {
-          customCss: require.resolve('./src/css/custom.css'),
+          customCss: require.resolve("./src/css/custom.css"),
         },
       }),
     ],
@@ -53,78 +89,85 @@ const config = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
+      image: "img/logo-dark.jpg",
       navbar: {
         logo: {
-          alt: 'FerretDB Logo',
-          src: 'img/logo_dark.png',
-          srcDark:'img/logo_light.png'
+          alt: "FerretDB Logo",
+          src: "img/logo-dark.jpg",
+          srcDark: "img/logo-light.png",
         },
         items: [
           {
-            to: '/',
-            label: 'Documentation',
-            position: 'left'
+            to: "/",
+            label: "Documentation",
+            position: "right",
+            type: "docsVersionDropdown",
           },
           {
-            href: 'https://blog.ferretdb.io/',
-            label: 'Blog',
-            position: 'left'
+            href: "https://blog.ferretdb.io/",
+            label: "Blog",
+            position: "right",
           },
           {
-            href: 'https://github.com/FerretDB/',
-            label: 'GitHub',
-            position: 'right',
+            href: "https://github.com/FerretDB/",
+            label: "GitHub",
+            position: "right",
           },
           {
-            href: 'https://ferretdb.io/',
-            label: 'Go to FerretDB.io',
-            position: 'right',
+            href: "https://www.ferretdb.com/",
+            label: "FerretDB.com",
+            position: "right",
           },
         ],
       },
       footer: {
-        style: 'dark',
+        style: "dark",
         links: [
           {
-            title: 'FerretDB Docs',
+            title: "FerretDB Docs",
             items: [
               {
-                label: 'Documentation',
-                to: '/',
+                label: "Documentation",
+                to: "/",
               },
             ],
           },
           {
-            title: 'Community',
+            title: "Community",
             items: [
               {
-                label: 'GitHub Discussions',
-                href: 'https://github.com/FerretDB/FerretDB/discussions/',
+                label: "GitHub Discussions",
+                href: "https://github.com/FerretDB/FerretDB/discussions/",
               },
               {
-                label: 'Slack',
-                href: 'https://join.slack.com/t/ferretdb/shared_invite/zt-zqe9hj8g-ZcMG3~5Cs5u9uuOPnZB8~A',
+                label: "Slack",
+                href: "https://slack.ferretdb.io/",
               },
               {
-                label: 'Twitter',
-                href: 'https://twitter.com/ferret_db',
+                label: "X (Twitter)",
+                href: "https://x.com/ferret_db",
               },
               {
-                label: 'Mastodon',
-                href: 'https://techhub.social/@ferretdb',
+                label: "Mastodon",
+                href: "https://techhub.social/@ferretdb",
               },
             ],
           },
           {
-            title: 'More',
+            title: "More",
             items: [
               {
-                label: 'Blog',
-                to: 'https://blog.ferretdb.io/',
+                href: "https://www.ferretdb.com/",
+                label: "FerretDB.com",
+                position: "right",
               },
               {
-                label: 'GitHub',
-                href: 'https://github.com/FerretDB/',
+                label: "Blog",
+                to: "https://blog.ferretdb.io/",
+              },
+              {
+                label: "GitHub",
+                href: "https://github.com/FerretDB/",
               },
             ],
           },
@@ -132,10 +175,18 @@ const config = {
         copyright: `Copyright © ${new Date().getFullYear()} FerretDB Inc. Built with Docusaurus.`,
       },
       prism: {
-        theme: lightCodeTheme,
-        darkTheme: darkCodeTheme,
+        theme: themes.github,
+        darkTheme: themes.dracula,
+        additionalLanguages: ["go", "sql", "json", "json5", "systemd"],
+      },
+      mermaid: {
+        theme: { light: "default", dark: "dark" },
       },
     }),
+  markdown: {
+    mermaid: true,
+  },
+  themes: ["@docusaurus/theme-mermaid"],
 };
 
 module.exports = config;

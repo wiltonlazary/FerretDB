@@ -19,9 +19,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/FerretDB/FerretDB/build/version"
+	"github.com/FerretDB/FerretDB/v2/build/version"
 )
 
+// Parts of Prometheus metric names.
 const (
 	namespace = "ferretdb"
 	subsystem = ""
@@ -43,45 +44,43 @@ func newMetricsCollector(p *Provider, addUUIDToMetric bool) *metricsCollector {
 	}
 }
 
-// Describe implements prometheus.Collector.
+// Describe implements [prometheus.Collector].
 func (mc *metricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	prometheus.DescribeByCollect(mc, ch)
 }
 
-// Collect implements prometheus.Collector.
+// Collect implements [prometheus.Collector].
 func (mc *metricsCollector) Collect(ch chan<- prometheus.Metric) {
-	v := version.Get()
+	info := version.Get()
 	constLabels := prometheus.Labels{
-		"version": v.Version,
-		"commit":  v.Commit,
-		"branch":  v.Branch,
-		"dirty":   strconv.FormatBool(v.Dirty),
-		"package": v.Package,
-		"debug":   strconv.FormatBool(v.DebugBuild),
+		"version": info.Version,
+		"commit":  info.Commit,
+		"branch":  info.Branch,
+		"dirty":   strconv.FormatBool(info.Dirty),
+		"package": info.Package,
+		"dev":     strconv.FormatBool(info.DevBuild),
 	}
 
 	s := mc.p.Get()
 
-	switch {
-	case s.Telemetry == nil:
-		constLabels["telemetry"] = "undecided"
-	case *s.Telemetry:
-		constLabels["telemetry"] = "enabled"
-		if s.LatestVersion != v.Version {
-			constLabels["latest_version_available"] = s.LatestVersion
-		}
-	default:
-		constLabels["telemetry"] = "disabled"
-	}
+	constLabels["telemetry"] = s.TelemetryString()
+	constLabels["update_available"] = strconv.FormatBool(s.UpdateAvailable)
 
 	if mc.addUUIDToMetric {
 		constLabels["uuid"] = s.UUID
 	}
 
 	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "up"), "FerretDB instance state.", nil, constLabels),
+		prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, subsystem, "up"),
+			"FerretDB instance state.",
+			[]string{"postgresql", "documentdb"},
+			constLabels,
+		),
 		prometheus.GaugeValue,
 		1,
+		s.PostgreSQLVersion,
+		s.DocumentDBVersion,
 	)
 }
 

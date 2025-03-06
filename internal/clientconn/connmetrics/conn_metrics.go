@@ -21,10 +21,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/FerretDB/FerretDB/internal/util/must"
+	"github.com/FerretDB/FerretDB/v2/internal/util/must"
 )
 
-// ConnMetrics represents conn metrics.
+// ConnMetrics represents metrics of an individual conn or a collection of conns.
 type ConnMetrics struct {
 	Requests  *prometheus.CounterVec
 	Responses *prometheus.CounterVec
@@ -32,8 +32,8 @@ type ConnMetrics struct {
 
 // commandMetrics represents command results metrics.
 type commandMetrics struct {
-	Failures map[string]int // by result, excluding "ok"
-	Total    int
+	Failures map[string]int // count by error codes; no "ok" there
+	Total    int            // both ok and errors
 }
 
 // newConnMetrics creates connection metrics.
@@ -60,13 +60,13 @@ func newConnMetrics() *ConnMetrics {
 	}
 }
 
-// Describe implements prometheus.Collector.
+// Describe implements [prometheus.Collector].
 func (cm *ConnMetrics) Describe(ch chan<- *prometheus.Desc) {
 	cm.Requests.Describe(ch)
 	cm.Responses.Describe(ch)
 }
 
-// Collect implements prometheus.Collector.
+// Collect implements [prometheus.Collector].
 func (cm *ConnMetrics) Collect(ch chan<- prometheus.Metric) {
 	cm.Requests.Collect(ch)
 	cm.Responses.Collect(ch)
@@ -74,7 +74,11 @@ func (cm *ConnMetrics) Collect(ch chan<- prometheus.Metric) {
 
 // GetResponses returns a map with all response metrics:
 //
-//	opcode (e.g. "OP_MSG") -> command (e.g. "update") -> argument (e.g. "$set") -> commandMetrics
+// opcode (e.g. "OP_MSG", "OP_QUERY") ->
+// command (e.g. "find", "aggregate") ->
+// argument that caused an error (e.g. "sort", "$count (stage)"; or "unknown") ->
+// result (e.g. "NotImplemented", "InternalError"; or "ok") ->
+// count.
 func (cm *ConnMetrics) GetResponses() map[string]map[string]map[string]commandMetrics {
 	metrics := make(chan prometheus.Metric)
 	go func() {

@@ -16,7 +16,6 @@ package state
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,17 +23,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/FerretDB/FerretDB/build/version"
+	"github.com/FerretDB/FerretDB/v2/build/version"
 )
 
 func TestMetrics(t *testing.T) {
 	t.Parallel()
 
-	filename := filepath.Join(t.TempDir(), "state.json")
-	p, err := NewProvider(filename)
+	p, err := NewProvider("")
 	require.NoError(t, err)
 
-	v := version.Get()
+	err = p.Update(func(s *State) {
+		s.PostgreSQLVersion = "postgres"
+		s.DocumentDBVersion = "documentdb"
+	})
+	require.NoError(t, err)
+
+	info := version.Get()
 
 	t.Run("WithUUID", func(t *testing.T) {
 		t.Parallel()
@@ -51,9 +55,9 @@ func TestMetrics(t *testing.T) {
 			`
 				# HELP ferretdb_up FerretDB instance state.
 				# TYPE ferretdb_up gauge
-				ferretdb_up{branch=%q,commit=%q,debug="%t",dirty="%t",package="unknown",telemetry="undecided",uuid=%q,version=%q} 1
+				ferretdb_up{branch=%q,commit=%q,dev="%t",dirty="%t",documentdb="documentdb",package=%q,postgresql="postgres",telemetry="undecided",update_available="false",uuid=%q,version=%q} 1
 			`,
-			v.Branch, v.Commit, v.DebugBuild, v.Dirty, uuid, v.Version,
+			info.Branch, info.Commit, info.DevBuild, info.Dirty, info.Package, uuid, info.Version,
 		)
 		assert.NoError(t, testutil.CollectAndCompare(mc, strings.NewReader(expected)))
 	})
@@ -66,13 +70,14 @@ func TestMetrics(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, problems)
 
+		//nolint:lll // it is more readable this way
 		expected := fmt.Sprintf(
 			`
 				# HELP ferretdb_up FerretDB instance state.
 				# TYPE ferretdb_up gauge
-				ferretdb_up{branch=%q,commit=%q,debug="%t",dirty="%t",package="unknown",telemetry="undecided",version=%q} 1
+				ferretdb_up{branch=%q,commit=%q,dev="%t",dirty="%t",documentdb="documentdb",package=%q,postgresql="postgres",telemetry="undecided",update_available="false",version=%q} 1
 			`,
-			v.Branch, v.Commit, v.DebugBuild, v.Dirty, v.Version,
+			info.Branch, info.Commit, info.DevBuild, info.Dirty, info.Package, info.Version,
 		)
 		assert.NoError(t, testutil.CollectAndCompare(mc, strings.NewReader(expected)))
 	})

@@ -20,12 +20,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AlekSi/pointer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProvider(t *testing.T) {
 	t.Parallel()
+
+	t.Run("Var", func(t *testing.T) {
+		t.Parallel()
+
+		p, err := NewProvider("")
+		require.NoError(t, err)
+
+		var1 := p.Var()
+		var2 := p.Var()
+
+		assert.Contains(t, var1.String(), "undecided")
+		assert.Contains(t, var2.String(), "undecided")
+
+		err = p.Update(func(s *State) { s.Telemetry = pointer.ToBool(true) })
+		require.NoError(t, err)
+
+		assert.Contains(t, var1.String(), "enabled")
+		assert.Contains(t, var2.String(), "enabled")
+	})
 
 	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
@@ -67,20 +87,23 @@ func TestProvider(t *testing.T) {
 	t.Run("Subscribe", func(t *testing.T) {
 		t.Parallel()
 
-		p, err := NewProvider(filepath.Join(t.TempDir(), "state.json"))
+		filename := filepath.Join(t.TempDir(), "state.json")
+		p, err := NewProvider(filename)
 		require.NoError(t, err)
 
 		ch := p.Subscribe()
 
 		require.Len(t, ch, cap(ch), "channel should be full")
 
-		p.Update(func(s *State) { *s = State{UUID: "00000000-0000-0000-0000-000000000000"} })
+		err = p.Update(func(s *State) { *s = State{UUID: "00000000-0000-0000-0000-000000000000"} })
+		require.NoError(t, err)
 
 		expected := &State{
 			UUID:  "11111111-1111-1111-1111-111111111111",
 			Start: time.Now(),
 		}
-		p.Update(func(s *State) { *s = *expected })
+		err = p.Update(func(s *State) { *s = *expected })
+		require.NoError(t, err)
 
 		assert.Equal(t, expected, p.Get())
 		require.Len(t, ch, cap(ch), "channel should be full")
@@ -98,8 +121,35 @@ func TestProvider(t *testing.T) {
 			close(got)
 		}()
 
-		p.Update(func(s *State) { *s = *expected })
+		err = p.Update(func(s *State) { *s = *expected })
+		require.NoError(t, err)
 
 		<-got
+	})
+}
+
+func TestProviderDir(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Normal", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		require.NoError(t, os.RemoveAll(dir))
+		assert.NoDirExists(t, dir)
+
+		p, err := NewProviderDir(dir)
+		require.NoError(t, err)
+		assert.NotNil(t, p)
+		assert.DirExists(t, dir)
+		assert.FileExists(t, filepath.Join(dir, "state.json"))
+	})
+
+	t.Run("NoAccess", func(t *testing.T) {
+		t.Parallel()
+
+		p, err := NewProviderDir("/")
+		require.Error(t, err)
+		assert.Nil(t, p)
 	})
 }

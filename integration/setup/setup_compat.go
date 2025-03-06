@@ -16,32 +16,33 @@ package setup
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"runtime/trace"
+	"log/slog"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
+	"go.opentelemetry.io/otel"
 
-	"github.com/FerretDB/FerretDB/integration/shareddata"
-	"github.com/FerretDB/FerretDB/internal/util/testutil"
+	"github.com/FerretDB/FerretDB/v2/internal/util/testutil"
+
+	"github.com/FerretDB/FerretDB/v2/integration/shareddata"
 )
 
 // SetupCompatOpts represents setup options for compatibility test.
 //
-// TODO Add option to use read-only user. https://github.com/FerretDB/FerretDB/issues/1025
+// Add option to use read-only user.
+// TODO https://github.com/FerretDB/FerretDB/issues/1025
 type SetupCompatOpts struct {
 	// Data providers.
 	Providers []shareddata.Provider
 
 	// If true, a non-existent collection will be added to the list of collections.
 	// This is useful to test the behavior when a collection is not found.
-	// TODO This flag is not needed, always add a non-existent collection https://github.com/FerretDB/FerretDB/issues/1545
+	//
+	// This flag is not needed, always add a non-existent collection.
+	// TODO https://github.com/FerretDB/FerretDB/issues/1545
 	AddNonExistentCollection bool
 
 	databaseName       string
@@ -59,56 +60,54 @@ type SetupCompatResult struct {
 func SetupCompatWithOpts(tb testing.TB, opts *SetupCompatOpts) *SetupCompatResult {
 	tb.Helper()
 
-	startup()
+	if *compatURLF == "" {
+		tb.Skip("-compat-url is empty, skipping compatibility test")
+	}
 
 	ctx, cancel := context.WithCancel(testutil.Ctx(tb))
 
-	defer trace.StartRegion(ctx, "SetupCompatWithOpts").End()
-
-	// skip tests for MongoDB as soon as possible
-	if *compatPortF == 0 {
-		tb.Skip("compatibility tests require second system")
-	}
+	setupCtx, span := otel.Tracer("").Start(ctx, "SetupCompatWithOpts")
+	defer span.End()
 
 	if opts == nil {
 		opts = new(SetupCompatOpts)
 	}
 
-	// When we use `task all` to run `pg` and `tigris` compat tests in parallel,
-	// they both use the same MongoDB instance.
-	// Add the handler's name to prevent the usage of the same database.
-	opts.databaseName = testutil.DatabaseName(tb) + "_" + *handlerF
+	opts.databaseName = testutil.DatabaseName(tb)
+
+	// When database name is too long, database is created but inserting documents
+	// fail with InvalidNamespace error.
+	require.Less(tb, len(opts.databaseName), 64, "database name %q is too long", opts.databaseName)
 
 	opts.baseCollectionName = testutil.CollectionName(tb)
 
-	level := zap.NewAtomicLevelAt(zap.ErrorLevel)
+	var levelVar slog.LevelVar
+	levelVar.Set(slog.LevelError)
 	if *debugSetupF {
-		level = zap.NewAtomicLevelAt(zap.DebugLevel)
+		levelVar.Set(slog.LevelDebug)
 	}
-	logger := testutil.Logger(tb, level)
 
-	var targetURI string
-	if *targetPortF == 0 {
-		targetURI = setupListener(tb, ctx, logger)
-	} else {
-		targetURI = buildMongoDBURI(tb, ctx, &buildMongoDBURIOpts{
-			hostPort: fmt.Sprintf("127.0.0.1:%d", *targetPortF),
-			tls:      *targetTLSF,
-		})
+	logger := testutil.LevelLogger(tb, &levelVar)
+
+	var targetClient *mongo.Client
+
+	uri := *targetURLF
+	if uri == "" {
+		uri = setupListener(tb, setupCtx, nil, logger)
 	}
+
+	targetClient = setupClient(tb, setupCtx, uri, false)
 
 	// register cleanup function after setupListener registers its own to preserve full logs
 	tb.Cleanup(cancel)
 
-	compatURI := buildMongoDBURI(tb, ctx, &buildMongoDBURIOpts{
-		hostPort: fmt.Sprintf("127.0.0.1:%d", *compatPortF),
-		tls:      *compatTLSF,
-	})
+	targetCollections := setupCompatCollections(tb, setupCtx, targetClient, opts, *targetBackendF)
 
-	targetCollections := setupCompatCollections(tb, ctx, setupClient(tb, ctx, targetURI), opts)
-	compatCollections := setupCompatCollections(tb, ctx, setupClient(tb, ctx, compatURI), opts)
+	compatClient := setupClient(tb, setupCtx, *compatURLF, false)
+	compatCollections := setupCompatCollections(tb, setupCtx, compatClient, opts, "mongodb")
 
-	level.SetLevel(*logLevelF)
+	err := levelVar.UnmarshalText([]byte(*logLevelF))
+	require.NoError(tb, err)
 
 	return &SetupCompatResult{
 		Ctx:               ctx,
@@ -128,94 +127,66 @@ func SetupCompat(tb testing.TB) (context.Context, []*mongo.Collection, []*mongo.
 }
 
 // setupCompatCollections setups a single database with one collection per provider for compatibility tests.
-func setupCompatCollections(tb testing.TB, ctx context.Context, client *mongo.Client, opts *SetupCompatOpts) []*mongo.Collection {
+func setupCompatCollections(tb testing.TB, ctx context.Context, client *mongo.Client, opts *SetupCompatOpts, backend string) []*mongo.Collection {
 	tb.Helper()
 
-	defer trace.StartRegion(ctx, "setupCompatCollections").End()
+	ctx, span := otel.Tracer("").Start(ctx, "setupCompatCollections")
+	defer span.End()
 
 	database := client.Database(opts.databaseName)
 
 	// drop remnants of the previous failed run
+	_ = database.RunCommand(ctx, bson.D{{"dropAllUsersFromDatabase", 1}})
 	_ = database.Drop(ctx)
 
-	// delete database unless test failed
+	// drop database unless test failed
 	tb.Cleanup(func() {
 		if tb.Failed() {
 			return
 		}
 
-		err := database.Drop(ctx)
+		err := database.RunCommand(ctx, bson.D{{"dropAllUsersFromDatabase", 1}}).Err()
+		require.NoError(tb, err)
+
+		err = database.Drop(ctx)
 		require.NoError(tb, err)
 	})
 
-	collections := make([]*mongo.Collection, 0, len(opts.Providers))
-	for _, provider := range opts.Providers {
+	providers := slices.Clone(opts.Providers)
+
+	// TODO https://github.com/FerretDB/FerretDB-DocumentDB/issues/825
+	// rand.Shuffle(len(providers), func(i, j int) { providers[i], providers[j] = providers[j], providers[i] })
+
+	collections := make([]*mongo.Collection, 0, len(providers))
+
+	for _, provider := range providers {
 		collectionName := opts.baseCollectionName + "_" + provider.Name()
 		fullName := opts.databaseName + "." + collectionName
 
-		if *targetPortF == 0 && !slices.Contains(provider.Handlers(), *handlerF) {
-			tb.Logf(
-				"Provider %q is not compatible with handler %q, skipping creating %q.",
-				provider.Name(), *handlerF, fullName,
-			)
-			continue
-		}
-
-		region := trace.StartRegion(ctx, fmt.Sprintf("setupCompatCollections/%s", collectionName))
-
 		collection := database.Collection(collectionName)
-
-		// drop remnants of the previous failed run
-		_ = collection.Drop(ctx)
-
-		// if validators are set, create collection with them (otherwise collection will be created on first insert)
-		if validators := provider.Validators(*handlerF, collectionName); len(validators) > 0 {
-			var opts options.CreateCollectionOptions
-			for key, value := range validators {
-				opts.SetValidator(bson.D{{key, value}})
-			}
-
-			err := database.CreateCollection(ctx, collectionName, &opts)
-			if err != nil {
-				var cmdErr *mongo.CommandError
-				if errors.As(err, &cmdErr) {
-					// If collection can't be created in MongoDB because MongoDB has a different validator format, it's ok:
-					require.Contains(tb, cmdErr.Message, `unknown top level operator: $tigrisSchemaString`)
-				}
-			}
-		}
 
 		docs := shareddata.Docs(provider)
 		require.NotEmpty(tb, docs)
 
 		res, err := collection.InsertMany(ctx, docs)
-		require.NoError(tb, err, "%s: handler %q, collection %s", provider.Name(), *handlerF, fullName)
+		require.NoError(tb, err, "%s: backend %q, collection %s", provider.Name(), backend, fullName)
 		require.Len(tb, res.InsertedIDs, len(docs))
 
-		// delete collection unless test failed
-		tb.Cleanup(func() {
-			if tb.Failed() {
-				tb.Logf("Keeping %s for debugging.", fullName)
-				return
-			}
-
-			err := collection.Drop(ctx)
-			require.NoError(tb, err)
-		})
-
 		collections = append(collections, collection)
-
-		region.End()
 	}
 
-	// TODO opts.AddNonExistentCollection is not needed, always add a non-existent collection
-	// https://github.com/FerretDB/FerretDB/issues/1545
+	// opts.AddNonExistentCollection is not needed, always add a non-existent collection
+	// TODO https://github.com/FerretDB/FerretDB/issues/1545
 	if opts.AddNonExistentCollection {
 		nonExistedCollectionName := opts.baseCollectionName + "-non-existent"
 		collection := database.Collection(nonExistedCollectionName)
 		collections = append(collections, collection)
 	}
 
-	require.NotEmpty(tb, collections, "all providers were not compatible")
+	require.NotEmpty(tb, collections)
+
+	// TODO https://github.com/FerretDB/FerretDB-DocumentDB/issues/825
+	// rand.Shuffle(len(collections), func(i, j int) { collections[i], collections[j] = collections[j], collections[i] })
+
 	return collections
 }

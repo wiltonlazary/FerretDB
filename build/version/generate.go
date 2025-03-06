@@ -24,7 +24,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/FerretDB/FerretDB/internal/util/must"
+	"github.com/FerretDB/FerretDB/v2/internal/util/must"
 )
 
 // runGit runs `git` with given arguments and returns stdout.
@@ -74,6 +74,10 @@ func main() {
 
 		saveFile(runGit("branch", "--show-current"), "branch.txt")
 	}()
+
+	// output package.txt in the same format just for logging
+	b, _ := os.ReadFile("package.txt")
+	log.Printf("package.txt: %s", b)
 
 	wg.Wait()
 }
